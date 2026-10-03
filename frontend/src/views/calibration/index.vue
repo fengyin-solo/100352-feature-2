@@ -3,7 +3,7 @@
     <header class="page-head">
       <div>
         <h2>仪器检定管理</h2>
-        <p class="page-desc">维护仪器检定记录，围绕记录编号、仪器编号、仪器名称、检定单位做登记、筛选与状态流转。</p>
+        <p class="page-desc">维护仪器检定记录，围绕记录编号、仪器编号、仪器名称、检定单位做登记、筛选与状态流转；站点停用会同步新增待送检待办。</p>
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记仪器检定记录</button>
@@ -24,7 +24,7 @@
       </span>
     </p>
 
-    <form class="filter-bar" @submit.prevent="reload">
+    <form class="filter-bar" @submit.prevent="search">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
         <input v-model="filters[field]" :placeholder="`按${field}检索`" />
@@ -37,13 +37,15 @@
       <thead>
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
+          <th>来源站点</th>
           <th>当前状态</th>
           <th>可执行动作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">{{ row[column] || '—' }}</td>
+          <td>{{ row['来源站点'] || '—' }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
@@ -58,13 +60,15 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无仪器检定数据，可先登记仪器检定记录</td>
+          <td :colspan="columns.length + 3" class="empty-state">暂无仪器检定数据，可先登记仪器检定记录</td>
         </tr>
       </tbody>
     </table>
 
     <footer class="page-foot">
       <span>共 {{ total }} 条仪器检定记录</span>
+      <Pager :page="page" :size="pageSize" :total="total" @update:page="goPage" />
+      <span v-if="infoMessage" class="info-text">{{ infoMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -73,12 +77,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import Pager from '@/components/Pager.vue'
 import {
   downloadEntries,
+  filterRows,
   listEntries,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { listRows } from '@/data/local-store'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('calibration')
@@ -86,21 +93,35 @@ const columns = ["记录编号", "仪器编号", "仪器名称", "检定单位",
 const actions = ["送出检定", "确认合格", "标记不合格"]
 const statuses = ["待送检", "送检中", "已合格", "不合格", "已停用"]
 const stats = [{"label": "待送检仪器", "value": 0}, {"label": "已合格仪器", "value": 0}, {"label": "不合格仪器", "value": 0}]
+const pageSize = 5
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
+const page = ref(1)
 const errorMessage = ref('')
+const infoMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
-const statusSummary = computed(() =>
-  statuses.map((status: string) => ({
+const statusSummary = computed(() => {
+  const scoped = filterRows(listRows(meta.key), filters.value)
+  return statuses.map((status: string) => ({
     status,
-    count: rows.value.filter((row) => String(row.status) === status).length,
-  })),
-)
+    count: scoped.filter((row) => String(row.status) === status).length,
+  }))
+})
 
 function resetFilters() {
   filters.value = {}
+  search()
+}
+
+function search() {
+  page.value = 1
+  reload()
+}
+
+function goPage(next: number) {
+  page.value = next
   reload()
 }
 
@@ -114,20 +135,24 @@ function openCreate() {
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
+  infoMessage.value = ''
   const result = applyAction(meta.key, Number(row.id), action)
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  infoMessage.value = result.message
+  // 动作后记录数/筛选结果可能变化，越界页由服务层回收，这里同步回来。
   reload()
 }
 
 function reload() {
   errorMessage.value = ''
   try {
-    const payload = listEntries(meta.key, filters.value)
+    const payload = listEntries(meta.key, { filters: filters.value, page: page.value, size: pageSize })
     rows.value = payload.items
     total.value = payload.total
+    page.value = payload.page
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '仪器检定列表读取失败'
   }

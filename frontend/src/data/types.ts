@@ -27,6 +27,13 @@ export type PageResult = {
   size: number
 }
 
+// 列表查询：筛选条件 + 分页；page 越界时由服务层回收到有效页。
+export type ListQuery = {
+  filters?: Record<string, string>
+  page?: number
+  size?: number
+}
+
 export type ActionResult = {
   ok: boolean
   message: string
