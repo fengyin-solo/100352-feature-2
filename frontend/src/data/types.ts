@@ -27,6 +27,21 @@ export type PageResult = {
   size: number
 }
 
+/** 个人视图：某个值班人存下的一组常用筛选条件。 */
+export type SavedView = {
+  name: string
+  owner: string
+  filters: Record<string, string>
+  updatedAt: string
+}
+
+/** 站点列表的查询选项：启用的个人视图 + 分页。 */
+export type StationListOptions = {
+  views?: string[]
+  page?: number
+  size?: number
+}
+
 export type ActionResult = {
   ok: boolean
   message: string

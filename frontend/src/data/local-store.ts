@@ -1,3 +1,4 @@
+import { DEFAULT_USER } from './current-user'
 import { SEED_ROWS } from './seed'
 import type { EntryRow } from './types'
 
@@ -6,6 +7,36 @@ const STORAGE_KEY = 'hydrology-monitor-station:entries'
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
+}
+
+// 旧版示例数据里站点「管理单位」「运行状态」是占位文案、巡检记录的「站点编号」用的是
+// 巡检模块自己的编号，直接留着会让越权拦截和最近巡检时间联查失效，这里做一次幂等迁移。
+function migrateLegacyEntries(data: Record<string, EntryRow[]>): Record<string, EntryRow[]> {
+  const stations = data.station
+  if (Array.isArray(stations)) {
+    const seedByCode = new Map(SEED_ROWS.station.map((row) => [String(row['站点编号']), row]))
+    for (const row of stations) {
+      const unit = row['管理单位']
+      if (typeof unit === 'string' && /^监测站点样例\d+$/.test(unit)) {
+        const seedRow = seedByCode.get(String(row['站点编号'] ?? ''))
+        row['管理单位'] = String(seedRow?.['管理单位'] ?? DEFAULT_USER.unit)
+      }
+      const runStatus = row['运行状态']
+      if (typeof runStatus === 'string' && /^监测站点样例\d+$/.test(runStatus)) {
+        row['运行状态'] = String(row.status)
+      }
+    }
+  }
+  const inspections = data.inspection
+  if (Array.isArray(inspections)) {
+    for (const row of inspections) {
+      const code = row['站点编号']
+      if (typeof code === 'string' && /^INSP-\d{4}$/.test(code)) {
+        row['站点编号'] = code.replace(/^INSP-/, 'STAT-')
+      }
+    }
+  }
+  return data
 }
 
 function readStorage(): Record<string, EntryRow[]> {
@@ -20,7 +51,7 @@ function readStorage(): Record<string, EntryRow[]> {
   }
   try {
     const parsed = JSON.parse(raw) as Record<string, EntryRow[]>
-    return { ...fallback, ...parsed }
+    return migrateLegacyEntries({ ...fallback, ...parsed })
   } catch {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fallback))
     return fallback
